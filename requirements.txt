@@ -1,0 +1,8 @@
+google-cloud-bigquery
+google-cloud-aiplatform
+streamlit
+click
+pyyaml
+networkx
+sqlparse
+python-dotenv
