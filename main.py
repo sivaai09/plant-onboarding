@@ -8,7 +8,7 @@ from agents.table_mapper import TableMapperAgent
 from agents.view_mapper import ViewMapperAgent
 from agents.ddl_generator import generate_ddl
 from agents.schema_validator import SchemaValidatorAgent
-from agents.troubleshooter import TroubleshootingAgent # Import the new agent
+from agents.troubleshooter import TroubleshootingAgent
 from models.schema_objects import Table, View
 from utils.naming_utils import generate_new_name
 
@@ -37,19 +37,16 @@ def onboard(new_plant, reference_plant, gcp_project, include_views, dry_run, onl
 
     client = BigQueryClient(project_id=project_id)
 
-    # Ensure the target dataset exists
     if not dry_run:
         client.create_dataset_if_not_exists(new_plant)
 
     schema = analyze_plant_schema(client, reference_plant)
 
-    # --- Mapping Phase ---
     table_mapper = TableMapperAgent()
     table_mapping = table_mapper.map_tables(schema.tables, reference_plant, new_plant)
 
-    view_mapper = ViewMapperAgent(project_id=project_id) # Pass project_id to ViewMapperAgent
+    view_mapper = ViewMapperAgent(project_id=project_id)
     new_schema_objects = []
-    translated_view_sqls = {}
 
     for table in schema.tables:
         new_table = Table(
@@ -62,15 +59,13 @@ def onboard(new_plant, reference_plant, gcp_project, include_views, dry_run, onl
 
     if include_views:
         for view in schema.views:
-            translated_view = view_mapper.map_view(view, table_mapping, new_plant) # Use AI for translation
+            translated_view = view_mapper.map_view(view, table_mapping, new_plant)
             new_schema_objects.append(translated_view)
 
-    # --- Filtering Phase ---
     if only:
         only_list = [generate_new_name(o, reference_plant, new_plant) for o in only.split(',')]
         new_schema_objects = [obj for obj in new_schema_objects if obj.name in only_list]
 
-    # --- Dependency Resolution and Execution Phase ---
     translated_dependencies = {}
     all_mappings = {**table_mapping}
     if include_views:
@@ -83,7 +78,6 @@ def onboard(new_plant, reference_plant, gcp_project, include_views, dry_run, onl
 
     click.echo(f"Found {len(ordered_objects)} objects to create in the correct order.")
 
-    # --- Validation Phase ---
     validator = SchemaValidatorAgent(client=client)
     if not validator.validate_schema(new_schema_objects):
         click.echo("Validation failed. Aborting onboarding.", err=True)
@@ -151,7 +145,6 @@ def troubleshoot(error_message, gcp_project):
                 click.echo(f"Attempting to replace in {file_path}...")
                 click.echo(f"Old String: \n'''\n{old_string}\n'''")
                 click.echo(f"New String: \n'''\n{new_string}\n'''")
-                # In a real scenario, you would call the replace tool here:
                 # default_api.replace(file_path=file_path, old_string=old_string, new_string=new_string)
                 click.echo("Fix applied (simulated). Please verify the file manually.")
             except Exception as e:

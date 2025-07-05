@@ -22,9 +22,6 @@ def analyze_plant_schema(client: BigQueryClient, plant_name: str) -> PlantSchema
     for view_obj in views + materialized_views:
         referenced_tables_and_views = get_tables_from_sql(view_obj.sql)
         for ref_name in referenced_tables_and_views:
-            # Check if the referenced name is one of our known schema objects
-            # This is a simplification; a more robust solution would resolve full qualified names
-            # and handle cases where the referenced object is not part of the current plant schema.
             if ref_name in all_schema_objects:
                 dependencies[view_obj.name].append(ref_name)
 

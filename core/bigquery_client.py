@@ -10,7 +10,6 @@ class BigQueryClient:
             from google.cloud import bigquery
             self.client = bigquery.Client(project=project_id, location=location)
             self.real_client = True
-            print(f"BigQueryClient initialized for project {project_id} in {location}.")
         except (ImportError, Exception) as e:
             print(f"WARNING: Could not initialize real BigQuery client: {e}. Running in mock mode.")
             self.client = None
@@ -27,16 +26,13 @@ class BigQueryClient:
         dataset_ref = self.client.dataset(dataset_id)
         try:
             self.client.get_dataset(dataset_ref)
-            print(f"[API] Dataset {dataset_id} already exists.")
         except NotFound:
-            print(f"[API] Dataset {dataset_id} not found. Creating it...")
             dataset = bigquery.Dataset(dataset_ref)
             dataset.location = self.location
             try:
                 self.client.create_dataset(dataset)
-                print(f"[SUCCESS] Dataset {dataset_id} created.")
             except Conflict:
-                 print(f"[API] Dataset {dataset_id} was created by another process.") # Race condition handling
+                 pass # Race condition handling
             except Exception as e:
                 print(f"[ERROR] Failed to create dataset {dataset_id}: {e}")
                 raise
@@ -44,10 +40,8 @@ class BigQueryClient:
     def get_tables(self, dataset_id: str) -> List[Table]:
         """Gets all tables in a dataset."""
         if not self.real_client:
-            print(f"[MOCK] Getting tables from {dataset_id}")
             return self._get_mock_tables(dataset_id)
 
-        print(f"[API] Fetching tables from dataset: {self.project_id}.{dataset_id}")
         tables = []
         try:
             for bq_table in self.client.list_tables(f"{self.project_id}.{dataset_id}"):
@@ -60,19 +54,16 @@ class BigQueryClient:
                         dataset=table_ref.dataset_id,
                         columns=columns
                     ))
-            print(f"[API] Found {len(tables)} tables.")
         except Exception as e:
-            print(f"[ERROR] Could not fetch tables: {e}. Returning mock data.")
+            print(f"[ERROR] Could not fetch tables from {dataset_id}: {e}. Returning mock data.")
             return self._get_mock_tables(dataset_id)
         return tables
 
     def get_views(self, dataset_id: str) -> List[View]:
         """Gets all views in a dataset."""
         if not self.real_client:
-            print(f"[MOCK] Getting views from {dataset_id}")
             return self._get_mock_views(dataset_id)
 
-        print(f"[API] Fetching views from dataset: {self.project_id}.{dataset_id}")
         views = []
         try:
             for bq_table in self.client.list_tables(f"{self.project_id}.{dataset_id}"):
@@ -84,19 +75,16 @@ class BigQueryClient:
                         dataset=view_ref.dataset_id,
                         sql=view_ref.view_query
                     ))
-            print(f"[API] Found {len(views)} views.")
         except Exception as e:
-            print(f"[ERROR] Could not fetch views: {e}. Returning mock data.")
+            print(f"[ERROR] Could not fetch views from {dataset_id}: {e}. Returning mock data.")
             return self._get_mock_views(dataset_id)
         return views
 
     def get_materialized_views(self, dataset_id: str) -> List[MaterializedView]:
         """Gets all materialized views in a dataset."""
         if not self.real_client:
-            print(f"[MOCK] Getting materialized views from {dataset_id}")
             return [] # No mock MVs for now
 
-        print(f"[API] Fetching materialized views from dataset: {self.project_id}.{dataset_id}")
         mvs = []
         try:
             for bq_table in self.client.list_tables(f"{self.project_id}.{dataset_id}"):
@@ -112,32 +100,27 @@ class BigQueryClient:
                         refresh_schedule=mv_ref.refresh_time_interval_in_millis,
                         auto_refresh=mv_ref.enable_refresh
                     ))
-            print(f"[API] Found {len(mvs)} materialized views.")
         except Exception as e:
-            print(f"[ERROR] Could not fetch materialized views: {e}. Returning empty list.")
+            print(f"[ERROR] Could not fetch materialized views from {dataset_id}: {e}. Returning empty list.")
             return []
         return mvs
 
     def execute_ddl(self, ddl: str, dry_run: bool = True):
         """Executes a DDL statement in BigQuery."""
         if dry_run:
-            print(f"[DRY RUN] DDL is valid. To execute, run without the --dry-run flag.")
-            print(f"--- DDL Statement ---\n{ddl}\n---------------------")
+            print(f"[DRY RUN] DDL is valid. To execute, run without the --dry-run flag.\n--- DDL Statement ---\n{ddl}\n---------------------")
             return
 
         if self.real_client:
-            print(f"[EXECUTION] Applying DDL to BigQuery...")
             from google.cloud import bigquery
             job_config = bigquery.QueryJobConfig(use_legacy_sql=False)
             try:
                 query_job = self.client.query(ddl, job_config=job_config)
                 query_job.result()  # Wait for the job to complete
-                print("[SUCCESS] DDL executed successfully.")
             except Exception as e:
                 print(f"[ERROR] Failed to execute DDL: {e}")
         else:
-            print(f"[MOCK EXECUTION] Not executing DDL because BigQuery client is not available.")
-            print(f"--- DDL Statement ---\n{ddl}\n---------------------")
+            print(f"[MOCK EXECUTION] Not executing DDL because BigQuery client is not available.\n--- DDL Statement ---\n{ddl}\n---------------------")
 
     def _get_mock_tables(self, dataset_id: str) -> List[Table]:
         return [

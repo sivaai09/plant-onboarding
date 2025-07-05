@@ -31,11 +31,33 @@ new_plant = st.sidebar.text_input("New Plant Dataset ID", "plant2")
 include_views = st.sidebar.checkbox("Include Views (and Materialized Views)", True)
 dry_run = st.sidebar.checkbox("Dry Run (Preview DDL only)", True)
 
+# Initialize session state for schema and objects if not already present
+if 'schema' not in st.session_state:
+    st.session_state.schema = None
+if 'new_schema_objects' not in st.session_state:
+    st.session_state.new_schema_objects = []
+if 'selected_objects' not in st.session_state:
+    st.session_state.selected_objects = []
+if 'table_mapping' not in st.session_state:
+    st.session_state.table_mapping = {}
+if 'view_mapping' not in st.session_state:
+    st.session_state.view_mapping = {}
+if 'translated_view_sqls' not in st.session_state:
+    st.session_state.translated_view_sqls = {}
+
 # --- Main Application Logic ---
-if st.sidebar.button("Start Onboarding"):
+if st.sidebar.button("Analyze Schema"):
+    st.session_state.schema = None # Reset schema on new analysis
+    st.session_state.new_schema_objects = []
+    st.session_state.selected_objects = []
+    st.session_state.table_mapping = {}
+    st.session_state.view_mapping = {}
+    st.session_state.translated_view_sqls = {}
+
     st.subheader("1. Analyzing Reference Plant Schema")
     client = BigQueryClient(project_id=project_id)
     schema = analyze_plant_schema(client, reference_plant)
+    st.session_state.schema = schema
 
     st.write(f"Found {len(schema.tables)} tables, {len(schema.views)} views, and {len(schema.materialized_views)} materialized views in `{reference_plant}`.")
 
@@ -44,74 +66,85 @@ if st.sidebar.button("Start Onboarding"):
     st.write("This shows the structure of the reference plant's schema.")
     schema_tree_data = []
     for table in schema.tables:
-        schema_tree_data.append({"Object": table.name, "Type": "Table", "SQL": "N/A"})
+        schema_tree_data.append({"Object Name": table.name, "Type": "Table", "Source SQL": "N/A"})
     for view in schema.views:
-        schema_tree_data.append({"Object": view.name, "Type": "View", "SQL": view.sql})
+        schema_tree_data.append({"Object Name": view.name, "Type": "View", "Source SQL": view.sql})
     for mv in schema.materialized_views:
-        schema_tree_data.append({"Object": mv.name, "Type": "Materialized View", "SQL": mv.sql})
+        schema_tree_data.append({"Object Name": mv.name, "Type": "Materialized View", "Source SQL": mv.sql})
     st.dataframe(schema_tree_data, use_container_width=True)
 
-    # --- Mapping Phase ---
+    # --- Mapping and Translation ---
     st.subheader("3. Mapping and Translation")
     table_mapper = TableMapperAgent()
-    table_mapping = table_mapper.map_tables(schema.tables, reference_plant, new_plant)
+    st.session_state.table_mapping = table_mapper.map_tables(schema.tables, reference_plant, new_plant)
 
     view_mapper = ViewMapperAgent(project_id=project_id) # Pass project_id to ViewMapperAgent
-    new_schema_objects = []
-    translated_view_sqls = {}
+    new_schema_objects_temp = []
 
     for table in schema.tables:
         new_table = Table(
-            name=table_mapping.get(table.name, table.name),
+            name=st.session_state.table_mapping.get(table.name, table.name),
             project=project_id,
             dataset=new_plant,
             columns=table.columns
         )
-        new_schema_objects.append(new_table)
+        new_schema_objects_temp.append(new_table)
 
     if include_views:
         for view in schema.views:
             with st.spinner(f"Translating view {view.name} with AI..."):
-                translated_view = view_mapper.map_view(view, table_mapping, new_plant)
-                new_schema_objects.append(translated_view)
-                translated_view_sqls[view.name] = translated_view.sql
+                translated_view = view_mapper.map_view(view, st.session_state.table_mapping, new_plant)
+                new_schema_objects_temp.append(translated_view)
+                st.session_state.translated_view_sqls[view.name] = translated_view.sql
         for mv in schema.materialized_views:
-            # For MVs, we'll just do name mapping for now, AI translation can be added later
             new_mv = MaterializedView(
                 name=generate_new_name(mv.name, reference_plant, new_plant),
                 project=project_id,
                 dataset=new_plant,
-                sql=translate_view_sql(mv.sql, table_mapping, {}), # Translate SQL for MVs
+                sql=translate_view_sql(mv.sql, st.session_state.table_mapping, {}), # Translate SQL for MVs
                 partition_column=mv.partition_column,
                 cluster_columns=mv.cluster_columns,
                 refresh_schedule=mv.refresh_schedule,
                 auto_refresh=mv.auto_refresh
             )
-            new_schema_objects.append(new_mv)
+            new_schema_objects_temp.append(new_mv)
 
+    st.session_state.new_schema_objects = new_schema_objects_temp
     st.success("Schema objects mapped and views translated.")
 
     # --- Selective Migration (Placeholder for now, all objects are processed) ---
-    st.subheader("4. Selective Migration (All objects selected)")
-    st.info("In this version, all detected and translated objects will be processed.")
+    st.subheader("4. Selective Migration")
+    st.write("Select the objects you wish to onboard to the new plant.")
+    object_names = [obj.name for obj in st.session_state.new_schema_objects]
+    st.session_state.selected_objects = st.multiselect(
+        "Choose objects to migrate:",
+        options=object_names,
+        default=object_names # Select all by default
+    )
 
-    # --- Dependency Resolution ---
+    st.info(f"{len(st.session_state.selected_objects)} objects selected for migration.")
+
+# Only proceed if schema has been analyzed and objects are available
+if st.session_state.schema and st.session_state.new_schema_objects:
     st.subheader("5. Resolving Creation Order")
+    # Filter new_schema_objects based on selection
+    filtered_new_schema_objects = [obj for obj in st.session_state.new_schema_objects if obj.name in st.session_state.selected_objects]
+
     translated_dependencies = {}
-    all_mappings = {**table_mapping}
+    all_mappings = {**st.session_state.table_mapping}
     if include_views:
-        for view in schema.views:
+        for view in st.session_state.schema.views:
             all_mappings[view.name] = generate_new_name(view.name, reference_plant, new_plant)
-        for mv in schema.materialized_views:
+        for mv in st.session_state.schema.materialized_views:
             all_mappings[mv.name] = generate_new_name(mv.name, reference_plant, new_plant)
 
-    for obj_name, deps in schema.dependencies.items():
+    for obj_name, deps in st.session_state.schema.dependencies.items():
         new_obj_name = all_mappings.get(obj_name)
         if new_obj_name:
             translated_deps = [all_mappings.get(dep) for dep in deps if all_mappings.get(dep)]
             translated_dependencies[new_obj_name] = translated_deps
 
-    ordered_objects = resolve_creation_order(new_schema_objects, translated_dependencies)
+    ordered_objects = resolve_creation_order(filtered_new_schema_objects, translated_dependencies)
     st.write(f"Determined creation order for {len(ordered_objects)} objects.")
 
     # --- Dependency Visualization ---
@@ -121,7 +154,7 @@ if st.sidebar.button("Start Onboarding"):
         graph.node(obj.name, label=f"{obj.name}\n({obj.schema_type})")
     for obj_name, deps in translated_dependencies.items():
         for dep in deps:
-            if dep in all_mappings.values(): # Only draw edges for objects we are creating
+            if dep in st.session_state.selected_objects: # Only draw edges for selected objects
                 graph.edge(dep, obj_name)
     st.graphviz_chart(graph)
 
@@ -131,16 +164,35 @@ if st.sidebar.button("Start Onboarding"):
     ddl_statements = []
     for obj in ordered_objects:
         ddl = generate_ddl(obj)
-        ddl_statements.append((obj.name, obj.schema_type, ddl))
+        original_sql = "N/A"
+        if isinstance(obj, View) and obj.name in st.session_state.translated_view_sqls:
+            for original_view_obj in st.session_state.schema.views:
+                if original_view_obj.name == obj.name:
+                    original_sql = original_view_obj.sql
+                    break
+        elif isinstance(obj, MaterializedView):
+            for original_mv_obj in st.session_state.schema.materialized_views:
+                if original_mv_obj.name == obj.name:
+                    original_sql = original_mv_obj.sql
+                    break
 
-    for name, obj_type, ddl in ddl_statements:
+        ddl_statements.append((obj.name, obj.schema_type, ddl, original_sql))
+
+    for name, obj_type, ddl, original_sql in ddl_statements:
         with st.expander(f"{obj_type}: {name}"):
-            st.code(ddl, language="sql")
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write("**Original SQL (if applicable):**")
+                st.code(original_sql, language="sql")
+            with col2:
+                st.write("**Translated DDL:**")
+                st.code(ddl, language="sql")
 
     # --- Validation Phase ---
     st.subheader("8. Schema Validation")
+    client = BigQueryClient(project_id=project_id) # Re-initialize client for validation
     validator = SchemaValidatorAgent(client=client)
-    if validator.validate_schema(new_schema_objects):
+    if validator.validate_schema(filtered_new_schema_objects):
         st.success("Schema validation passed!")
     else:
         st.error("Schema validation failed. Please review warnings/errors above.")
@@ -148,20 +200,21 @@ if st.sidebar.button("Start Onboarding"):
 
     # --- Execution Phase ---
     st.subheader("9. Execution")
-    if not dry_run:
-        st.write(f"Creating dataset `{new_plant}` if it doesn't exist...")
-        client.create_dataset_if_not_exists(new_plant)
+    if st.button("Execute Onboarding"):
+        if not dry_run:
+            st.write(f"Creating dataset `{new_plant}` if it doesn't exist...")
+            client.create_dataset_if_not_exists(new_plant)
 
-        progress_bar = st.progress(0)
-        status_text = st.empty()
+            progress_bar = st.progress(0)
+            status_text = st.empty()
 
-        for i, obj in enumerate(ordered_objects):
-            ddl = generate_ddl(obj)
-            status_text.text(f"Processing {obj.schema_type}: {obj.name} ({i+1}/{len(ordered_objects)})")
-            client.execute_ddl(ddl, dry_run=False) # Force execution
-            progress_bar.progress((i + 1) / len(ordered_objects))
-        st.success("Onboarding process completed successfully!")
-    else:
-        st.info("Dry Run mode: No DDL was executed. Review the DDL Preview above.")
+            for i, obj in enumerate(ordered_objects):
+                ddl = generate_ddl(obj)
+                status_text.text(f"Processing {obj.schema_type}: {obj.name} ({i+1}/{len(ordered_objects)})")
+                client.execute_ddl(ddl, dry_run=False) # Force execution
+                progress_bar.progress((i + 1) / len(ordered_objects))
+            st.success("Onboarding process completed successfully!")
+        else:
+            st.info("Dry Run mode: No DDL was executed. Review the DDL Preview above.")
 
-    st.balloons()
+        st.balloons()

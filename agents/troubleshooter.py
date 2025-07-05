@@ -70,7 +70,6 @@ class TroubleshootingAgent:
                 prompt_text,
                 generation_config=self.generation_config,
             )
-            # Assuming the model returns a JSON string in its text attribute
             return json.loads(response.text)
         except Exception as e:
             return {

@@ -13,6 +13,7 @@ This project automates the process of onboarding new manufacturing plants by int
     *   **Schema Tree View**: Hierarchical display of tables, views, and materialized views.
     *   **Interactive Dependency Visualization**: A graph showing relationships between schema objects.
     *   **Side-by-side SQL Preview**: Review original and translated SQL DDL statements.
+    *   **Selective Migration**: Choose which tables/views to migrate to the new plant.
     *   **Progress Tracking**: Real-time updates during the onboarding process.
 *   **Command-Line Interface**: A CLI is available for scripting and automation.
 *   **Troubleshooting Agent with Proposed Fixes**: A dedicated agent that can diagnose error messages, provide actionable advice, and **propose specific code changes** for common issues. The user can then review and approve these proposed fixes before they are applied.
@@ -81,6 +82,8 @@ This will launch a web application where you can:
 - Choose whether to include views.
 - Perform a dry run to see the generated DDL and execution plan.
 - Visualize dependencies between tables and views.
+- Selectively migrate specific tables and views.
+- Track the progress of the onboarding process.
 
 ### Command-Line Interface (CLI)
 

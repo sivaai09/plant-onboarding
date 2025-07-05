@@ -1,19 +1,17 @@
 import json
 from typing import Dict
 from models.schema_objects import View
-from utils.naming_utils import generate_new_name # Import generate_new_name
+from utils.naming_utils import generate_new_name
 
-# Import Vertex AI libraries
 import vertexai
-from vertexai.preview.generative_models import GenerativeModel, Part, GenerationConfig
+from vertexai.preview.generative_models import GenerativeModel, GenerationConfig
 
 class ViewMapperAgent:
     def __init__(self, project_id: str, location: str = "us-central1"):
         vertexai.init(project=project_id, location=location)
-        # Changed to a generally available model for broader compatibility
         self.model = GenerativeModel("gemini-pro") 
         self.generation_config = GenerationConfig(
-            temperature=0.1, # Keep it low for deterministic SQL translation
+            temperature=0.1,
             top_p=0.95,
             top_k=32,
             max_output_tokens=8192,
@@ -71,24 +69,14 @@ class ViewMapperAgent:
             response = self.model.generate_content(
                 prompt_text,
                 generation_config=self.generation_config,
-                # stream=False # For synchronous response
             )
-            # Assuming the model returns a JSON string in its text attribute
-            response_json = json.loads(response.text)
-
-            return View(
-                name=response_json["new_view_name"],
-                project=view.project, # Project remains the same
-                dataset=target_plant, # Dataset changes to target_plant
-                sql=response_json["translated_sql"]
-            )
+            return json.loads(response.text)
         except Exception as e:
             print(f"[ERROR] Vertex AI call failed for view {view.name}: {e}")
             print(f"[ERROR] Returning original view with name mapped: {view.name} -> {generate_new_name(view.name, view.dataset, target_plant)}")
-            # Fallback to simple name mapping if AI fails
             return View(
                 name=generate_new_name(view.name, view.dataset, target_plant),
                 project=view.project,
                 dataset=target_plant,
-                sql=view.sql # Return original SQL if AI fails
+                sql=view.sql
             )

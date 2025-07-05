@@ -21,8 +21,6 @@ def generate_view_ddl(view: View) -> str:
 def generate_materialized_view_ddl(mv: MaterializedView) -> str:
     options = []
     if mv.refresh_schedule:
-        # BigQuery expects refresh_interval_minutes in milliseconds
-        # Assuming mv.refresh_schedule is in milliseconds, or needs conversion
         options.append(f"refresh_interval_minutes={int(mv.refresh_schedule / 60000)}")
     if mv.auto_refresh is not None:
         options.append(f"enable_refresh={str(mv.auto_refresh).lower()}")
@@ -32,9 +30,4 @@ def generate_materialized_view_ddl(mv: MaterializedView) -> str:
     partition_by_str = f"PARTITION BY {mv.partition_column}" if mv.partition_column else ""
     cluster_by_str = f"CLUSTER BY {', '.join(mv.cluster_columns)}" if mv.cluster_columns else ""
 
-    return f"""CREATE MATERIALIZED VIEW `{mv.project}.{mv.dataset}.{mv.name}`
-{partition_by_str}
-{cluster_by_str}
-{options_str}
-AS
-{mv.sql};"""
+    return f"""CREATE MATERIALIZED VIEW `{mv.project}.{mv.dataset}.{mv.name}`\n{partition_by_str}\n{cluster_by_str}\n{options_str}\nAS\n{mv.sql};"""
