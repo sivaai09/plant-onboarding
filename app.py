@@ -94,8 +94,11 @@ if st.sidebar.button("Analyze Schema"):
         for view in schema.views:
             with st.spinner(f"Translating view {view.name} with AI..."):
                 translated_view = view_mapper.map_view(view, st.session_state.table_mapping, new_plant)
-                new_schema_objects_temp.append(translated_view)
-                st.session_state.translated_view_sqls[view.name] = translated_view.sql
+                if translated_view:
+                    new_schema_objects_temp.append(translated_view)
+                    st.session_state.translated_view_sqls[view.name] = translated_view.sql
+                else:
+                    st.error(f"Failed to translate view {view.name}. Skipping this view.")
         for mv in schema.materialized_views:
             new_mv = MaterializedView(
                 name=generate_new_name(mv.name, reference_plant, new_plant),

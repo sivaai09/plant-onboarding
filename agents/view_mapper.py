@@ -73,10 +73,4 @@ class ViewMapperAgent:
             return json.loads(response.text)
         except Exception as e:
             print(f"[ERROR] Vertex AI call failed for view {view.name}: {e}")
-            print(f"[ERROR] Returning original view with name mapped: {view.name} -> {generate_new_name(view.name, view.dataset, target_plant)}")
-            return View(
-                name=generate_new_name(view.name, view.dataset, target_plant),
-                project=view.project,
-                dataset=target_plant,
-                sql=view.sql
-            )
+            return None
