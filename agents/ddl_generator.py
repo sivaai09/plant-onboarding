@@ -31,3 +31,7 @@ def generate_materialized_view_ddl(mv: MaterializedView) -> str:
     cluster_by_str = f"CLUSTER BY {', '.join(mv.cluster_columns)}" if mv.cluster_columns else ""
 
     return f"""CREATE MATERIALIZED VIEW `{mv.project}.{mv.dataset}.{mv.name}`\n{partition_by_str}\n{cluster_by_str}\n{options_str}\nAS\n{mv.sql};"""
+
+def generate_data_load_sql(table: Table, source_table_name: str, source_dataset: str) -> str:
+    """Generates the SQL to load data from the source table to the target table."""
+    return f"INSERT INTO `{table.project}.{table.dataset}.{table.name}` SELECT * FROM `{table.project}.{source_dataset}.{source_table_name}`"

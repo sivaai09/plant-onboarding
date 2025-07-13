@@ -7,7 +7,7 @@ from vertexai.preview.generative_models import GenerativeModel, GenerationConfig
 class TroubleshootingAgent:
     def __init__(self, project_id: str, location: str = "us-central1"):
         vertexai.init(project=project_id, location=location)
-        self.model = GenerativeModel("gemini-pro") # Using gemini-pro for general availability
+        self.model = GenerativeModel("gemini-2.5-pro") # Using gemini-pro for general availability
         self.generation_config = GenerationConfig(
             temperature=0.1,
             top_p=0.95,

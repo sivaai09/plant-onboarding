@@ -37,14 +37,16 @@ class BigQueryClient:
                 print(f"[ERROR] Failed to create dataset {dataset_id}: {e}")
                 raise
 
-    def get_tables(self, dataset_id: str) -> List[Table]:
+    def get_tables(self, dataset_id: str, project_id: str = None) -> List[Table]:
         """Gets all tables in a dataset."""
         if not self.real_client:
             return self._get_mock_tables(dataset_id)
 
+        target_project = project_id if project_id else self.project_id
+
         tables = []
         try:
-            for bq_table in self.client.list_tables(f"{self.project_id}.{dataset_id}"):
+            for bq_table in self.client.list_tables(f"{target_project}.{dataset_id}"):
                 if bq_table.table_type == 'TABLE':
                     table_ref = self.client.get_table(bq_table.reference)
                     columns = [Column(name=f.name, data_type=f.field_type, mode=f.mode) for f in table_ref.schema]
@@ -61,8 +63,8 @@ class BigQueryClient:
 
     def get_views(self, dataset_id: str) -> List[View]:
         """Gets all views in a dataset."""
-        if not self.real_client:
-            return self._get_mock_views(dataset_id)
+        # if not self.real_client:
+        #     return self._get_mock_views(dataset_id)
 
         views = []
         try:
@@ -105,7 +107,7 @@ class BigQueryClient:
             return []
         return mvs
 
-    def execute_ddl(self, ddl: str, dry_run: bool = True):
+    def execute_ddl(self, ddl: str, dry_run: bool = False):
         """Executes a DDL statement in BigQuery."""
         if dry_run:
             print(f"[DRY RUN] DDL is valid. To execute, run without the --dry-run flag.\n--- DDL Statement ---\n{ddl}\n---------------------")
@@ -115,10 +117,13 @@ class BigQueryClient:
             from google.cloud import bigquery
             job_config = bigquery.QueryJobConfig(use_legacy_sql=False)
             try:
+                print(f"[DEBUG] Executing DDL in BigQuery:\n{ddl}")
                 query_job = self.client.query(ddl, job_config=job_config)
                 query_job.result()  # Wait for the job to complete
+                print(f"[DEBUG] DDL execution successful.")
             except Exception as e:
                 print(f"[ERROR] Failed to execute DDL: {e}")
+                raise
         else:
             print(f"[MOCK EXECUTION] Not executing DDL because BigQuery client is not available.\n--- DDL Statement ---\n{ddl}\n---------------------")
 

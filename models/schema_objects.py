@@ -22,6 +22,8 @@ class Table(SchemaObject):
 class View(SchemaObject):
     sql: str
     dependencies: List[str] = field(default_factory=list)
+    changes_made: List[str] = field(default_factory=list)
+    warnings: List[str] = field(default_factory=list)
     schema_type: str = "VIEW"
 
 @dataclass

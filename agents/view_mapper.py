@@ -1,7 +1,9 @@
 import json
-from typing import Dict
-from models.schema_objects import View
-from utils.naming_utils import generate_new_name
+import os
+import yaml
+import streamlit as st
+from typing import Dict, Union
+from models.schema_objects import View, MaterializedView
 
 import vertexai
 from vertexai.preview.generative_models import GenerativeModel, GenerationConfig
@@ -9,68 +11,120 @@ from vertexai.preview.generative_models import GenerativeModel, GenerationConfig
 class ViewMapperAgent:
     def __init__(self, project_id: str, location: str = "us-central1"):
         vertexai.init(project=project_id, location=location)
-        self.model = GenerativeModel("gemini-pro") 
+        self.model = GenerativeModel("gemini-1.5-pro-preview-0409")
         self.generation_config = GenerationConfig(
             temperature=0.1,
             top_p=0.95,
             top_k=32,
             max_output_tokens=8192,
         )
+        self.config = self._load_config()
 
-    def map_view(self, view: View, table_mapping: dict, target_plant: str) -> View:
-        """Map view to new plant with AI assistance"""
+    def _load_config(self) -> Dict:
+        """Loads the plant onboarding configuration from YAML."""
+        config_path = os.path.join(os.path.dirname(__file__), '..', 'plant_onboarding_config.yaml')
+        try:
+            with open(config_path, 'r') as f:
+                return yaml.safe_load(f)
+        except FileNotFoundError:
+            st.error("CRITICAL: `plant_onboarding_config.yaml` not found.")
+            return {}
+        except Exception as e:
+            st.error(f"Error loading config: {e}")
+            return {}
 
-        prompt_text = f"""
-        You are an expert BigQuery SQL translator. Your task is to translate a BigQuery view definition
-        from a source manufacturing plant's schema to a new target manufacturing plant's schema.
+    def map_view(
+        self, view: Union[View, MaterializedView], table_mapping: dict, target_plant: str, custom_instructions: str = ""
+    ) -> Union[View, MaterializedView, None]:
+        """Map a view or materialized view to a new plant with AI assistance."""
 
-        Original View Details:
-        - View Name: {view.name}
-        - View SQL:
-        ```sql
-        {view.sql}
-        ```
-        - Source Plant Dataset: {view.dataset}
-
-        Target Plant Details:
-        - Target Plant Dataset: {target_plant}
-
-        Table Mappings (Old Name -> New Name):
-        ```json
-        {json.dumps(table_mapping, indent=2)}
-        ```
-
-        Your translation must adhere to the following strict requirements:
-        1.  **Update View Name**: Generate a new, appropriate view name for the target plant. The new name should follow the convention of replacing the source plant identifier with the target plant identifier (e.g., 'plant1_daily_summary' -> 'plant2_daily_summary'). If the original name doesn't contain a plant identifier, infer a suitable new name.
-        2.  **Translate Table References**: Replace ALL occurrences of old table names (including fully qualified names like `project.dataset.table` or `dataset.table`) with their corresponding new table names based on the provided `Table Mappings`. Ensure the new table names are correctly referenced within the SQL.
-        3.  **Adapt Plant-Specific Logic**: Analyze the SQL for any hardcoded plant-specific values (e.g., `WHERE location = 'MAIN_WAREHOUSE'`, `SELECT 'plant1' as plant_code`). Adapt these values to be appropriate for the `target_plant`. For example, if `plant1` is hardcoded, replace it with `target_plant`.
-        4.  **Preserve Business Logic**: The core business logic, aggregations, joins, CTEs, and subqueries must remain functionally identical, only adapted to the new plant's naming conventions and specific values.
-        5.  **Add Plant Identifier Column (if appropriate)**: If the original view implies a single plant context (e.g., by having a `plant_code` column or by its name), consider adding a new column `'{target_plant}' as plant_code` to the outermost SELECT statement, if it makes sense for the view's purpose and doesn't break existing logic.
-        6.  **Output Format**: Provide the response in a JSON object with the following keys:
-            -   `new_view_name`: The newly generated view name (string).
-            -   `translated_sql`: The complete, translated BigQuery SQL for the new view (string).
-            -   `changes_made`: A list of significant changes applied during translation (list of strings).
-            -   `warnings`: Any concerns or assumptions made during translation (list of strings).
-
-        Example of `translated_sql` format:
-        ```sql
-        CREATE VIEW `your_project.target_plant.new_view_name` AS
-        SELECT
-            -- ... translated columns and logic ...
-        FROM
-            `your_project.target_plant.new_table_name`
-        WHERE
-            -- ... adapted plant-specific conditions ...
-        ```
-        Ensure the `translated_sql` is a complete `CREATE VIEW` statement, including the `CREATE VIEW` clause and the fully qualified new view name.
-        """
+        prompt_text = self._build_prompt(view, table_mapping, target_plant, custom_instructions)
+        if not prompt_text:
+            return None
 
         try:
             response = self.model.generate_content(
                 prompt_text,
                 generation_config=self.generation_config,
             )
-            return json.loads(response.text)
+            
+            cleaned_response = response.text.strip().replace("```json", "").replace("```", "")
+            response_data = json.loads(cleaned_response)
+
+            common_args = {
+                "name": response_data.get("new_view_name"),
+                "project": view.project,
+                "dataset": target_plant,
+                "sql": response_data.get("translated_sql"),
+                "changes_made": response_data.get("changes_made", []),
+                "warnings": response_data.get("warnings", []),
+            }
+
+            if isinstance(view, MaterializedView):
+                return MaterializedView(
+                    **common_args,
+                    partition_column=view.partition_column,
+                    cluster_columns=view.cluster_columns,
+                    refresh_schedule=view.refresh_schedule,
+                    auto_refresh=view.auto_refresh,
+                )
+            else:
+                return View(**common_args)
+
         except Exception as e:
-            print(f"[ERROR] Vertex AI call failed for view {view.name}: {e}")
+            st.error(f"Vertex AI call failed for view {view.name}: {e}")
+            st.text_area("Failed Prompt", prompt_text, height=300)
             return None
+
+    def _build_prompt(self, view: Union[View, MaterializedView], table_mapping: dict, target_plant: str, custom_instructions: str) -> str:
+        view_type = "Materialized View" if isinstance(view, MaterializedView) else "View"
+        
+        reference_plant = view.dataset
+        target_plant_config = self.config.get('plants', {}).get(target_plant)
+        reference_plant_config = self.config.get('plants', {}).get(reference_plant)
+
+        if not target_plant_config or not reference_plant_config:
+            st.error(f"Config for reference plant '{reference_plant}' or target plant '{target_plant}' not in config file.")
+            return ""
+
+        discriminator_column = self.config.get('discriminator_column', 'unknown_discriminator')
+        source_dataset = self.config.get('source_dataset', 'unknown_source_dataset')
+        ref_discriminator_val = reference_plant_config.get('discriminator_value', 'unknown_ref_value')
+        target_discriminator_val = target_plant_config.get('discriminator_value', 'unknown_target_value')
+
+        return f'''
+        You are an expert BigQuery data architect. Your task is to create the SQL for a new plant-specific view by modeling it after an existing one, following a strict three-tiered data architecture.
+
+        **1. The Goal:**
+        Create a new `{view_type}` in the `{target_plant}` dataset.
+
+        **2. The Blueprint (Reference View):**
+        - **Name:** `{view.name}`
+        - **From Dataset:** `{reference_plant}`
+        - **Logic:** This view provides the business logic. It was filtered for its plant using a clause like `WHERE {discriminator_column} = '{ref_discriminator_val}'`.
+        - **Original SQL:**
+          ```sql
+          {view.sql}
+          ```
+
+        **3. The Raw Materials (Source Dataset):**
+        - **Dataset Name:** `{source_dataset}`
+        - You MUST rewrite the query to use tables from this central dataset. For example, `FROM orders` becomes `FROM `{source_dataset}.orders``.
+
+        **4. The Target (Your Output):**
+        - **Target Dataset:** `{target_plant}`
+        - The new view must be filtered for the target plant. The new filtering condition is `WHERE {discriminator_column} = '{target_discriminator_val}'`.
+
+        **Your Instructions:**
+        1.  **Analyze:** Understand the business logic of the reference SQL.
+        2.  **Rewrite Table References:** Change all `FROM` and `JOIN` clauses to point to tables within the `{source_dataset}` dataset.
+        3.  **Replace Plant Filter:** Find the `WHERE` clause that filters for the reference plant (`{ref_discriminator_val}`) and replace it with the filter for the target plant (`{target_discriminator_val}`).
+        4.  **Generate New Name:** Create a suitable new name for the view in the target dataset.
+        5.  **Apply Custom Instructions:** {custom_instructions if custom_instructions else 'None'}
+
+        **Provide the response as a single, valid JSON object with these keys:**
+        - `new_view_name`: (string) A new name for the view in the `{target_plant}` dataset.
+        - `translated_sql`: (string) The complete, new, and valid SQL query.
+        - `changes_made`: (list of strings) Brief summary of the key changes.
+        - `warnings`: (list of strings) Potential issues or warnings.
+        '''
